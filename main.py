@@ -58,17 +58,21 @@ def cargar_datos():
 
 
 async def destellar():
-    led = LED_async("LED")
-    led.flash(0.5)
-    await asyncio.sleep(5)
-    led.off
+    global band
+    led = machine.Pin("LED", machine.Pin.OUT)
+    
+    for i in range(10):  # Parpadea 10 veces en 5 segundos
+        led.toggle()
+        await asyncio.sleep(0.5)  # 0.5 segundos de encendido/apagado
+    
+    led.value(0)  # Asegurarse de que quede apagado al finalizar
+    band = False  # Resetea la variable al finalizar
 
 #Parte de asyncio y mqtt
 
 #recibir datos de los topicos suscritos
 def sub_cb(topic, msg, retained):
     global setpoint, modo, periodo,rele, destello, band
-    band = False
     print(f"Mensaje recibido en {topic.decode()}: {msg.decode()}")
     topico = topic.decode()
     valor = msg.decode()
@@ -128,8 +132,12 @@ async def conn_han(client):
 #Main definido como una funcion asyncio
 
 async def main(client):
-    #led = machine.Pin("LED", machine.Pin.OUT) 
+    led = machine.Pin("LED", machine.Pin.OUT) 
+    led.value(0)
+    temperatura = 24
+    humedad = 53
     global band
+    band = False
     await client.connect()
     n = 0
     relay = machine.Pin(28,machine.Pin.OUT)
@@ -167,6 +175,7 @@ async def main(client):
 
         if band:
             print("Orden de destello recibida")
+            band = False
             await destellar()
 
         datos = ujson.dumps(OrderedDict([('temperatura',temperatura),('humedad',humedad),
