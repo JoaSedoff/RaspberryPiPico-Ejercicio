@@ -15,29 +15,24 @@ from lib.mqtt_as import MQTTClient
 from lib.mqtt_local import config
 import uasyncio as asyncio
 from settings import SSID, password, BROKER
-
-
 import machine, dht, ujson
 from machine import Pin
 from collections import OrderedDict
 import ujson
+from lib.led_async import LED_async  # Class as listed above
 
 
 
 
-
-d = dht.DHT11(machine.Pin(13))
-
+d = dht.DHT11(machine.Pin(15))
 
 #guardar en JSON:
 def guardar_datos():
-    print("Guardando parametros...")
-    config = {"setpoint": setpoint, "modo":modo, "periodo": periodo}
-    
+    global setpoint,modo,periodo,rele
+    config = {"setpoint": setpoint, "modo":modo, "periodo": periodo, "rele":rele}
     try:
         with open("config.json","w") as f:
             ujson.dump(config,f)
-        print("Parametros guardados correctamente..")
     except Exception as e:
         print(f"Error al guardar parametros : {e}")
 
@@ -45,27 +40,35 @@ def guardar_datos():
 
 #cargar datos del JSON ya creado
 def cargar_datos():
-    global setpoint, modo, periodo
+    global setpoint, modo, periodo, rele
     try:
         with open("config.json","r") as f:
             config = ujson.load(f)
             setpoint = config.get("setpoint",20)
             modo = config.get("modo",1)
             periodo = config.get("periodo",10)
+            rele = config.get("rele",1)
             print(config)
     except:
         print("No se encontro el JSON, usando valores por defecto")
         setpoint = 20
         modo = 1
         periodo = 10
+        rele = 1
 
 
+async def destellar():
+    led = LED_async("LED")
+    led.flash(0.5)
+    await asyncio.sleep(5)
+    led.off
 
 #Parte de asyncio y mqtt
 
 #recibir datos de los topicos suscritos
 def sub_cb(topic, msg, retained):
-    global setpoint, modo, periodo
+    global setpoint, modo, periodo,rele, destello, band
+    band = False
     print(f"Mensaje recibido en {topic.decode()}: {msg.decode()}")
     topico = topic.decode()
     valor = msg.decode()
@@ -85,6 +88,15 @@ def sub_cb(topic, msg, retained):
         guardar_datos()
         print(f"periodo actualizado a: {periodo}")
 
+    if topico.endswith("/rele"):
+        rele = int(valor)
+        guardar_datos()
+        print(f"orden rele vale {rele} ")
+
+    if topico.endswith("/destello"):
+        destello = int(valor)
+        if destello: 
+            band = True
 
 #funcion para mostrar el estado de la conexión wifi (primero se debe conectar)
 async def wifi_han(state):
@@ -109,16 +121,21 @@ async def conn_han(client):
     print(f"Suscrito a {id + '/destello'}")
     await client.subscribe(id +'/modo', 1)
     print(f"Suscrito a {id + '/modo'}")
-#variables definidas por el usuario
+    await client.subscribe(id +'/destello', 1)
+    print(f"Suscrito a {id + '/destello'}")
+
+
 #Main definido como una funcion asyncio
 
 async def main(client):
-    led = machine.Pin("LED", machine.Pin.OUT)  # Cambiá el número según el pin de tu placa
+    #led = machine.Pin("LED", machine.Pin.OUT) 
+    global band
     await client.connect()
     n = 0
-    temperatura1 = 24
+    relay = machine.Pin(28,machine.Pin.OUT)
+    relay.value(1)
     cargar_datos()
-    print(f"Setpoint inicial: {setpoint}, Modo inicial:{modo}, Periodo inicial:{periodo}" )
+    print(f"Setpoint inicial: {setpoint}, Modo inicial:{modo}, Periodo inicial:{periodo}, Estado de rele: {rele}")
     await asyncio.sleep(2)  # Give broker time
     while True:
         try:
@@ -127,7 +144,6 @@ async def main(client):
                 temperatura=d.temperature()
                 try:
                     humedad=d.humidity()
-  
                 except OSError as e:
                     print("sin sensor temperatura")
             except OSError as e:
@@ -135,13 +151,25 @@ async def main(client):
         except OSError as e:
             pass
     
-        if (temperatura1 > setpoint) and (modo == 1):
-            led.value(1)
-            print("Temperatura alta, LED encendido") 
+        if (temperatura > setpoint) and (modo == 1): #en modo automatico el estado del rele depende de la temperatura y setpoint
+            relay.value(0)
+            print("Temperatura alta, rele encendido") 
         else:
-            led.value(0)       
+            relay.value(1)       
 
-        datos = ujson.dumps(OrderedDict([('temperatura',24),('humedad',53),
+        if (modo == 0): #si esta en modo manual, el estado del rele depende unicamente de la variable rele
+            if rele: 
+                relay.value(0)
+                print("Modo manual, encendiendo rele")
+            else: 
+                relay.value(1)
+                print("Modo manual, apagando rele")
+
+        if band:
+            print("Orden de destello recibida")
+            await destellar()
+
+        datos = ujson.dumps(OrderedDict([('temperatura',temperatura),('humedad',humedad),
                                         ('setpoint',setpoint),('periodo',periodo),('modo',modo)]))
         print(f"Publicando en el topico: {config['client_id']}")
         await client.publish(config['client_id'], datos, qos = 1)
@@ -152,7 +180,6 @@ async def main(client):
 
 
 #Configuracion de MQTT
-# Define configuration
 config['subs_cb'] = sub_cb
 config['connect_coro'] = conn_han
 config['wifi_coro'] = wifi_han
@@ -160,7 +187,8 @@ config['ssl'] = True
 config['ssid'] = SSID
 config['wifi_pw'] = password
 config['server'] = BROKER
-config['client_id'] = id.upper()
+config['client_id'] = id.upper() #pasa a mayusculas el id por el topico suscrito
+
 # Configurar cliente mqtt
 MQTTClient.DEBUG = False  # Optional
 client = MQTTClient(config)
