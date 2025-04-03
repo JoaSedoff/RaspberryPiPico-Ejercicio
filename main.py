@@ -61,12 +61,12 @@ async def destellar():
     global band
     led = machine.Pin("LED", machine.Pin.OUT)
     
-    for i in range(10):  # Parpadea 10 veces en 5 segundos
+    for i in range(10):  
         led.toggle()
-        await asyncio.sleep(0.5)  # 0.5 segundos de encendido/apagado
+        await asyncio.sleep(0.5)  
     
-    led.value(0)  # Asegurarse de que quede apagado al finalizar
-    band = False  # Resetea la variable al finalizar
+    led.value(0)  
+    band = False  
 
 #Parte de asyncio y mqtt
 
@@ -139,12 +139,11 @@ async def main(client):
     global band
     band = False
     await client.connect()
-    n = 0
-    relay = machine.Pin(28,machine.Pin.OUT)
-    relay.value(1)
-    cargar_datos()
-    print(f"Setpoint inicial: {setpoint}, Modo inicial:{modo}, Periodo inicial:{periodo}, Estado de rele: {rele}")
-    await asyncio.sleep(2)  # Give broker time
+    relay = machine.Pin(28,machine.Pin.OUT) #pin del rele
+    relay.value(1) #empieza en 1 (para el opto sería un bajo)
+    cargar_datos() #si hay un JSON ya creado lo lee
+    print(f"Setpoint inicial: {setpoint}, Modo inicial:{modo}, Periodo inicial:{periodo}, Estado de rele: {rele}") #informa valores del JSON leido
+    await asyncio.sleep(2) #tiempo para poder conectarse al broker
     while True:
         try:
             d.measure()
@@ -157,7 +156,7 @@ async def main(client):
             except OSError as e:
                 print("sin sensor humedad")
         except OSError as e:
-            pass
+            print("sin sensor")
     
         if (temperatura > setpoint) and (modo == 1): #en modo automatico el estado del rele depende de la temperatura y setpoint
             relay.value(0)
@@ -176,7 +175,7 @@ async def main(client):
         if band:
             print("Orden de destello recibida")
             band = False
-            await destellar()
+            asyncio.create_task(destellar())
 
         datos = ujson.dumps(OrderedDict([('temperatura',temperatura),('humedad',humedad),
                                         ('setpoint',setpoint),('periodo',periodo),('modo',modo)]))
